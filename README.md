@@ -10,6 +10,12 @@ Config is saved as **JSON** in `ccat.json`. You can configure your preferences
 there to be used on each run. It saves you from typing
 `ccat myfile.hs -s monokai -b light` every time.
 
+Requirements:
+-------------
+
+* **docopt** - Handles command-line argument parsing.
+* **pygments** - Syntax highlighting library for Python.
+
 
 Example:
 --------
