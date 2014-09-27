@@ -6,6 +6,7 @@
     -Christopher Welborn 09-26-2014
 """
 
+import json
 import os
 import sys
 import docopt
@@ -19,23 +20,38 @@ SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
 
 USAGESTR = """{versionstr}
-    Usage:
-        {script} -h | -v
-        {script} FILE... [-b style] [-g | -l name] [-s name]
-        {script} -L | -S
+Usage:
+    {script} -h | -v
+    {script} [FILE...] [-b style] [-D] [-g | -l name] [-n | -N] [-p] [-s name]
+    {script} -L | -S
 
-    Options:
-        FILE                         : One or many files to print.
-        -b style,--background style  : Either 'light', or 'dark'.
-                                       Changes the highlight style.
-        -g,--guess                   : Guess lexer by file content.
-        -h,--help                    : Show this help message.
-        -l name,--lexer name         : Use this language/lexer name.
-        -L,--lexers                  : List all known lexer names.
-        -s name,--style name         : Use this pygments style name.
-        -S,--styles                  : List all known style names.
-        -v,--version                 : Show version.
+Options:
+    FILE                         : One or many files to print.
+                                   When - is given, or no FILEs are given,
+                                   use stdin.
+    -b style,--background style  : Either 'light', or 'dark'.
+                                   Changes the highlight style.
+    -D,--debug                   : Debug mode. Show more info.
+    -g,--guess                   : Guess lexer by file content.
+    -h,--help                    : Show this help message.
+    -l name,--lexer name         : Use this language/lexer name.
+    -L,--lexers                  : List all known lexer names.
+    -n,--linenos                 : Print line numbers.
+    -N,--nolinenos               : Don't print line numbers.
+                                   Overrides config setting.
+    -p,--printnames              : Print file names.
+    -s name,--style name         : Use this pygments style name.
+    -S,--styles                  : List all known style names.
+    -v,--version                 : Show version.
 """.format(script=SCRIPT, versionstr=VERSIONSTR)
+
+CONFIG = os.path.join(SCRIPTDIR, 'ccat.json')
+# Config options that can be saved and reloaded for later.
+CONFIGOPTS = (
+    'background',
+    'linenos',
+    'style'
+)
 
 
 def main(argd):
@@ -50,18 +66,61 @@ def main(argd):
     return 0 if print_files(argd) else 1
 
 
-def print_file(filename, formatter, lexername=None, guesslexer=False):
-    """ Print a file's content with highlighting. """
-    use_stdin = filename == '-'
-    if use_stdin:
-        guesslexer = True
+def load_config(argd):
+    """ Load settings from the config file, override them with cmdline options.
+    """
+    cmdline = {k.lstrip('-'): v for k, v in argd.items()}
+    if not os.path.exists(CONFIG):
+        return cmdline
 
-    if (not use_stdin) and (not os.path.exists(filename)):
-        print_status('File does not exist:', filename)
-        return False
+    # Load config as json.
+    try:
+        with open(CONFIG, 'r') as f:
+            config = json.load(f)
+    except EnvironmentError as ex:
+        print_status('Error loading config from:', CONFIG, exc=ex)
+        return cmdline
+    except ValueError as exparse:
+        print_status('Error parsing config from:', CONFIG, exc=ex)
+        return cmdline
 
-    lexer = None
-    if not guesslexer:
+    # Merge the dicts.
+    merged = cmdline.copy()
+    for k, v in config.items():
+        if k not in CONFIGOPTS:
+            continue
+        if v and not merged[k]:
+            merged[k] = v
+    # Signal that the config was loaded from file.
+    if argd['--debug']:
+        print_debug(
+            'Config loaded from: {}'.format(CONFIG),
+            '\n{}'.format(json.dumps(config, indent=4, sort_keys=True)))
+    return merged
+
+
+def print_debug(lbl, value=None):
+    """ Prints a formatted debug msg. """
+    lbl = str(lbl).rjust(12)
+    print_status('{}:'.format(lbl), value=value)
+
+
+def print_file(
+        filename, formatter,
+        lexername=None, guesslexer=False, linenos=False, debug=False):
+        """ Print a file's content with highlighting. """
+
+        use_stdin = (not filename) or (filename == '-')
+        try:
+            if use_stdin:
+                content = sys.stdin.read()
+            else:
+                with open(filename, 'r') as f:
+                    content = f.read()
+        except EnvironmentError as exio:
+            print_status('Error opening file:', filename, exc=exio)
+            return False
+
         if lexername:
             try:
                 lexer = lexers.get_lexer_by_name(lexername)
@@ -69,36 +128,40 @@ def print_file(filename, formatter, lexername=None, guesslexer=False):
                 print_status('No lexer by that name:', lexername)
                 return False
         else:
-            try:
-                lexer = lexers.get_lexer_for_filename(filename)
-            except pygments.util.ClassNotFound:
-                # No lexer found.
-                lexer = lexers.get_lexer_by_name('text')
+            if guesslexer or use_stdin:
+                lexer = lexers.guess_lexer(content)
+            else:
+                try:
+                    lexer = lexers.get_lexer_for_filename(filename)
+                except pygments.util.ClassNotFound:
+                    # No lexer found.
+                    lexer = lexers.get_lexer_by_name('text')
 
-    try:
-        if filename in ('-', '--'):
-            content = sys.stdin.read()
-        else:
-            with open(filename, 'r') as f:
-                content = f.read()
-    except EnvironmentError as exio:
-        print_status('Error opening file:', filename, exc=exio)
-        return False
+        if debug:
+            print_debug('guessed', guesslexer or use_stdin)
+            print_debug('lexer', getattr(lexer, 'name', 'None'))
 
-    if guesslexer:
-        lexer = lexers.guess_lexer(content)
+        hcontent = pygments.highlight(content, lexer, formatter).split('\n')
+        # An extra newline that 'cat' doesn't print.
+        if not hcontent[-1]:
+            hcontent.pop(-1)
+        # Helps to format the line numbers. 1234 = len('1234') = .ljust(4)
+        digitlen = len(str(len(hcontent)))
+        for i, line in enumerate(hcontent):
+            if linenos:
+                lineno = color(str(i + 1).ljust(digitlen), fore='cyan')
+                print('{}: {}'.format(lineno, line))
+            else:
+                print(line)
 
-    hcontent = pygments.highlight(content, lexer, formatter)
-    for i, line in enumerate(hcontent.split('\n')):
-        lineno = color('{:<4}'.format(i + 1), fore='cyan')
-        print('{}: {}'.format(lineno, line))
-
-    return True
+        return True
 
 
 def print_files(argd):
     """ Print several files at once. """
-    stylename = argd['--style'] or 'monokai'
+    config = load_config(argd)
+
+    stylename = config['style'] or 'monokai'
     bgstyles = {
         'l': 'light',
         'light': 'light',
@@ -106,34 +169,63 @@ def print_files(argd):
         'dark': 'dark',
         'none': 'dark'
     }
-    bgstyle = bgstyles.get(str(argd['--background']).lower(), bgstyles['none'])
+    bgstyle = bgstyles.get(str(config['background']).lower(), bgstyles['none'])
 
     try:
         formatter = formatters.TerminalFormatter(
             bg=bgstyle,
-            linenos=True,
             style=stylename.lower())
     except pygments.util.ClassNotFound:
         print_status('Invalid style name:', stylename)
         return False
+    if config['debug']:
+        print_debug('bg-style', bgstyle)
+        print_debug('linenos', config['linenos'] or 'False')
 
+    if config['nolinenos']:
+        linenos = False
+    else:
+        linenos = config['linenos']
     results = []
-    for filename in argd['FILE']:
+    if not config['FILE']:
+        # No file names. Use stdin.
+        if config['debug']:
+            print_debug('\nUsing stdin, press CTRL + D for end of file.')
+        config['FILE'] = [None]
+
+    for filename in config['FILE']:
+        usestdin = (not filename) or (filename == '-')
+        if config['printnames']:
+            filenamefmt = color('stdin' if usestdin else filename, fore='cyan')
+            print('{}:'.format(filenamefmt))
+
         results.append(
             print_file(
                 filename,
                 formatter=formatter,
-                lexername=argd['--lexer'],
-                guesslexer=argd['--guess']))
-    return all(results)
+                lexername=config['lexer'],
+                guesslexer=config['guess'],
+                linenos=linenos,
+                debug=config['debug']))
+        if usestdin:
+            # Trying to read stdin again.
+            break
+
+    return save_config(config) and all(results)
 
 
 def print_lexers():
     """ Print all known lexer names. """
     print('\nLexer names:')
-    for lexerid in sorted(lexers.LEXERS):
-        lexername = lexers.LEXERS[lexerid]
-        print('    {}'.format(lexername))
+    fmtnames = lambda ns: '    names: {}'.format(', '.join(sorted(ns)))
+    fmttypes = lambda ts: '    types: {}'.format(', '.join(sorted(ts)))
+    for lexerid in sorted(lexers.LEXERS, key=lambda k: lexers.LEXERS[k][1]):
+        _, propername, names, types, __ = lexers.LEXERS[lexerid]
+        print('\n{}'.format(propername))
+        print(fmtnames(names))
+        if types:
+            print(fmttypes(types))
+
     return True
 
 
@@ -148,14 +240,14 @@ def print_status(msg, value=None, exc=None):
 
     if exc:
         msg = color(msg, fore='red')
-        if value:
-            msg = ' '.join((msg, color(value, fore='red', style='bold')))
+        if value is not None:
+            msg = ' '.join((msg, color(str(value), fore='red', style='bold')))
         print('\n{}'.format(msg))
         print('{}\n'.format(color(str(exc), fore='red', style='bold')))
     else:
         msg = color(msg, fore='cyan')
-        if value:
-            msg = ' '.join(msg, color(value, fore='blue', style='bold'))
+        if value is not None:
+            msg = ' '.join((msg, color(str(value), fore='blue', style='bold')))
         print(msg)
 
 
@@ -164,6 +256,18 @@ def print_styles():
     print('\nStyle names:')
     for stylename in sorted(styles.STYLE_MAP):
         print('    {}'.format(stylename))
+    return True
+
+
+def save_config(config):
+    """ Save the config object as json. """
+    config = {k: v for k, v in config.items() if v and (k in CONFIGOPTS)}
+    try:
+        with open(CONFIG, 'w') as f:
+            json.dump(config, f, indent=4, sort_keys=True)
+    except TypeError as ex:
+        print_status('Error saving config to:', CONFIG, exc=ex)
+        return False
     return True
 
 
