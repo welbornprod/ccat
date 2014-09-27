@@ -21,17 +21,23 @@ Example:
 --------
 
 I recommend you symlink this in `/usr/bin`, `~/.local/bin`, or another
-directory in `$PATH`. Here are a couple basic usage examples:
+directory in `$PATH`:
 
 ```
-    ccat myfile.py
-    echo "import os" | ccat
+ln -s /path/to/ccat.py /usr/bin/ccat
+```
+
+Here are a couple basic usage examples:
+
+```
+ccat myfile.py
+echo "import os" | ccat
 ```
 
 To show some debugging info, like which lexer was used:
 
 ```
-    ccat myfile -D
+ccat myfile -D
 ```
 
 
@@ -41,7 +47,7 @@ Options:
 ```
 Usage:
     ccat -h | -v
-    ccat [FILE...] [-b style] [-D] [-g | -l name] [-n | -N] [-p] [-s name]
+    ccat [FILE...] [-b style] [-C] [-D] [-g | -l name] [-n | -N] [-p] [-s name]
     ccat -L | -S
 
 Options:
@@ -50,6 +56,7 @@ Options:
                                    use stdin.
     -b style,--background style  : Either 'light', or 'dark'.
                                    Changes the highlight style.
+    -C,--nocolors                : Don't use colors?
     -D,--debug                   : Debug mode. Show more info.
     -g,--guess                   : Guess lexer by file content.
     -h,--help                    : Show this help message.
@@ -68,4 +75,10 @@ Options:
 
 ```
 cat myfile.py | ccat
+```
+
+*And the most useless use of `ccat` ever:*
+
+```
+ccat myfile.py -C
 ```

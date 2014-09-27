@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'CCat'
-VERSION = '0.0.1'
+VERSION = '0.0.2'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -22,7 +22,7 @@ SCRIPTDIR = os.path.abspath(sys.path[0])
 USAGESTR = """{versionstr}
 Usage:
     {script} -h | -v
-    {script} [FILE...] [-b style] [-D] [-g | -l name] [-n | -N] [-p] [-s name]
+    {script} [FILE...] [-b style] [-C] [-D] [-g | -l name] [-n | -N] [-p] [-s name]
     {script} -L | -S
 
 Options:
@@ -31,6 +31,7 @@ Options:
                                    use stdin.
     -b style,--background style  : Either 'light', or 'dark'.
                                    Changes the highlight style.
+    -C,--nocolors                : Don't use colors?
     -D,--debug                   : Debug mode. Show more info.
     -g,--guess                   : Guess lexer by file content.
     -h,--help                    : Show this help message.
@@ -64,6 +65,14 @@ def main(argd):
 
     # Print files.
     return 0 if print_files(argd) else 1
+
+
+def filename_is_stdin(s):
+    """ Returns True if this is an acceptable name for using stdin.
+        Like None or '-'.
+        Other names may be added in the future.
+    """
+    return (not s) or (s == '-')
 
 
 def load_config(argd):
@@ -105,51 +114,57 @@ def print_debug(lbl, value=None):
     print_status('{}:'.format(lbl), value=value)
 
 
-def print_file(
-        filename, formatter,
-        lexername=None, guesslexer=False, linenos=False, debug=False):
-        """ Print a file's content with highlighting. """
+def print_file(fileobject, formatter, **kwargs):
+        """ Print a file's content with highlighting.
+            Arguments:
+                fileobject  : An open fd to read from.
+                lexer       : A Pygments Lexer(), pre-initialized.
+                              If None, then guess the lexer based on content.
+                formatter   : A Pygments Formatter(), pre-initialized.
+                              (saves from creating a formatter on each file)
+            Keyword Arguments:
+                linenos     : Print line numbers.
+                debug       : Print extra debugging info.
+                usecolor    : Use colors. This is ccat, not cat. Default: True
+        """
+        lexer = kwargs.get('lexer', None)
+        linenos = kwargs.get('linenos', False)
+        debug = kwargs.get('debug', False)
+        usecolor = kwargs.get('usecolor', True)
+        if not formatter:
+            raise ValueError('Need a formatter to use.')
 
-        use_stdin = (not filename) or (filename == '-')
         try:
-            if use_stdin:
-                content = sys.stdin.read()
-            else:
-                with open(filename, 'r') as f:
-                    content = f.read()
-        except EnvironmentError as exio:
-            print_status('Error opening file:', filename, exc=exio)
+            content = fileobject.read()
+        except Exception as ex:
+            print_status('Unable to read the file!:', exc=ex)
             return False
 
-        if lexername:
-            try:
-                lexer = lexers.get_lexer_by_name(lexername)
-            except pygments.util.ClassNotFound:
-                print_status('No lexer by that name:', lexername)
-                return False
+        if usecolor:
+            if not lexer:
+                if debug:
+                    print_debug('guessed', True)
+                lexer = try_lexer_guess(content)
+
+            if debug:
+                print_debug('lexer', lexer.name)
+            hcontent = pygments.highlight(
+                content,
+                lexer,
+                formatter).split('\n')
+            # An extra newline that 'cat' doesn't print.
+            if not hcontent[-1]:
+                hcontent.pop(-1)
         else:
-            if guesslexer or use_stdin:
-                lexer = lexers.guess_lexer(content)
-            else:
-                try:
-                    lexer = lexers.get_lexer_for_filename(filename)
-                except pygments.util.ClassNotFound:
-                    # No lexer found.
-                    lexer = lexers.get_lexer_by_name('text')
+            hcontent = content.split('\n')
 
-        if debug:
-            print_debug('guessed', guesslexer or use_stdin)
-            print_debug('lexer', getattr(lexer, 'name', 'None'))
-
-        hcontent = pygments.highlight(content, lexer, formatter).split('\n')
-        # An extra newline that 'cat' doesn't print.
-        if not hcontent[-1]:
-            hcontent.pop(-1)
         # Helps to format the line numbers. 1234 = len('1234') = .ljust(4)
         digitlen = len(str(len(hcontent)))
         for i, line in enumerate(hcontent):
             if linenos:
-                lineno = color(str(i + 1).ljust(digitlen), fore='cyan')
+                lineno = str(i + 1)
+                if usecolor:
+                    lineno = color(lineno.ljust(digitlen), fore='cyan')
                 print('{}: {}'.format(lineno, line))
             else:
                 print(line)
@@ -162,54 +177,71 @@ def print_files(argd):
     config = load_config(argd)
 
     stylename = config['style'] or 'monokai'
-    bgstyles = {
-        'l': 'light',
-        'light': 'light',
-        'd': 'dark',
-        'dark': 'dark',
-        'none': 'dark'
-    }
-    bgstyle = bgstyles.get(str(config['background']).lower(), bgstyles['none'])
-
-    try:
-        formatter = formatters.TerminalFormatter(
-            bg=bgstyle,
-            style=stylename.lower())
-    except pygments.util.ClassNotFound:
+    formatter = try_formatter(stylename, background=config['background'])
+    if not formatter:
         print_status('Invalid style name:', stylename)
-        return False
+
     if config['debug']:
-        print_debug('bg-style', bgstyle)
         print_debug('linenos', config['linenos'] or 'False')
 
     if config['nolinenos']:
         linenos = False
     else:
         linenos = config['linenos']
-    results = []
-    if not config['FILE']:
-        # No file names. Use stdin.
+
+    def print_stdin_warn():
         if config['debug']:
             print_debug('\nUsing stdin, press CTRL + D for end of file.')
+
+    def print_filename(s):
+        """ Helper function, prints file names if --printnames is used """
+        if config['printnames']:
+            print('\n{}:'.format(color(s, fore='blue')))
+
+    if not config['FILE']:
+        # No file names. Use stdin.
         config['FILE'] = [None]
 
-    for filename in config['FILE']:
-        usestdin = (not filename) or (filename == '-')
-        if config['printnames']:
-            filenamefmt = color('stdin' if usestdin else filename, fore='cyan')
-            print('{}:'.format(filenamefmt))
+    # Arguments that apply to all files.
+    printargs = {
+        'formatter': formatter,
+        'linenos': linenos,
+        'debug': config['debug'],
+        'usecolor': not config['nocolors']
+    }
 
-        results.append(
-            print_file(
-                filename,
-                formatter=formatter,
-                lexername=config['lexer'],
-                guesslexer=config['guess'],
-                linenos=linenos,
-                debug=config['debug']))
+    results = []
+    # Only read stdin once, but can be mixed in with other files.
+    # This is set to True if stdin has been read already.
+    stdin_read = False
+
+    for filename in config['FILE']:
+        usestdin = filename_is_stdin(filename)
+        if config['guess']:
+            printargs['lexer'] = None
+        else:
+            printargs['lexer'] = try_lexer(config['lexer'], filename=filename)
+
+        if config['lexer'] and not printargs['lexer']:
+            print_status('Bad lexer name:', config['lexer'])
+            print_status('Lexer will be guessed.')
+
         if usestdin:
-            # Trying to read stdin again.
-            break
+            if stdin_read:
+                if config['debug']:
+                    print_status('stdin was already read, skipping.')
+                continue
+            print_stdin_warn()
+            print_filename('stdin')
+            results.append(print_file(sys.stdin, **printargs))
+            stdin_read = True
+        else:
+            try:
+                with open(filename, 'r') as fileobj:
+                    print_filename(filename)
+                    results.append(print_file(fileobj, **printargs))
+            except EnvironmentError as ex:
+                print_status('Unable to read file:', filename, exc=ex)
 
     return save_config(config) and all(results)
 
@@ -269,6 +301,75 @@ def save_config(config):
         print_status('Error saving config to:', CONFIG, exc=ex)
         return False
     return True
+
+
+def try_formatter(stylename, background=None):
+    """ Try getting a Formatter() to use,
+        Arguments:
+            stylename  : A valid pygments style name.
+            background : 'light' or 'dark'. Defaults to 'dark'
+    """
+    bgstyles = {
+        'l': 'light',
+        'light': 'light',
+        'd': 'dark',
+        'dark': 'dark',
+        'none': 'dark'
+    }
+    bgstyle = bgstyles.get(str(background).lower(), bgstyles['none'])
+
+    try:
+        formatter = formatters.TerminalFormatter(
+            bg=bgstyle,
+            style=stylename.lower())
+    except pygments.util.ClassNotFound:
+        return None
+    return formatter
+
+
+def try_lexer_guess(content):
+    """ Try getting a pygments lexer by content.
+        If it can't be guessed, return the default 'text' lexer.
+    """
+    try:
+        lexer = lexers.guess_lexer(content)
+    except pygments.util.ClassNotFound:
+        return lexers.get_lexer_by_name('text')
+    return lexer
+
+
+def try_lexer(name, filename=None):
+    """ Try getting a pygments lexer by name.
+        None is returned if no lexer can be found by that name,
+        unless 'filename' is given. If 'filename' is given the lexer
+        is guessed by file name.
+        Ultimately returns None on failure.
+    """
+    if not name:
+        if filename_is_stdin(filename):
+            # No lexer or file name.
+            return None
+        try:
+            lexer = lexers.get_lexer_for_filename(filename)
+        except pygments.util.ClassNotFound:
+            return None
+        # Retrieved by file name only.
+        return lexer
+
+    try:
+        lexer = lexers.get_lexer_by_name(name)
+    except pygments.util.ClassNotFound:
+        if filename_is_stdin(filename):
+            # No lexer found.
+            return None
+        try:
+            lexer = lexers.get_lexer_for_filename(filename)
+        except pygments.util.ClassNotFound:
+            return None
+        # Retrieved by falling back to file name.
+        return lexer
+    # Successful lexer by name.
+    return lexer
 
 
 class ColorCodes(object):
