@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """ ccat.py
-    ...
+    ...Automatic syntax highlighting cat-like command.
     -Christopher Welborn 09-26-2014
 """
 
@@ -13,7 +13,7 @@ import docopt
 import pygments
 from pygments import formatters, lexers, styles
 
-NAME = 'ccat.py'
+NAME = 'CCat'
 VERSION = '0.0.1'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
