@@ -402,7 +402,8 @@ class ColorCodes(object):
         try:
             ival = int(val)
         except (TypeError, ValueError) as ex:
-            raise self.make_256error(colortype, val) from ex
+            # Python 2 doesn't like 'raise e2 from e1'
+            raise self.make_256error(colortype, val)
         else:
             if (ival < 0) or (ival > 255):
                 raise self.make_256error(colortype, val)
