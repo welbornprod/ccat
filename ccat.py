@@ -187,6 +187,7 @@ def print_files(argd):
     formatter = try_formatter(stylename, background=config['background'])
     if not formatter:
         print_status('Invalid style name:', stylename)
+        print_status('Use \'ccat --styles\' to list known style names.')
         return False
 
     if config['debug']:
@@ -232,7 +233,8 @@ def print_files(argd):
 
         if config['lexer'] and not printargs['lexer']:
             print_status('Bad lexer name:', config['lexer'])
-            print_status('Lexer will be guessed.')
+            print_status('Use \'ccat --lexers\' to list known lexer names.')
+            return False
 
         if usestdin:
             if stdin_read:
