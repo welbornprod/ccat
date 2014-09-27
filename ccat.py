@@ -160,14 +160,21 @@ def print_file(fileobject, formatter, **kwargs):
 
         # Helps to format the line numbers. 1234 = len('1234') = .ljust(4)
         digitlen = len(str(len(hcontent)))
+        # Set up the line number formatter to reduce if statements in the loop.
+        if usecolor:
+            formatnum = lambda ln: color(ln.ljust(digitlen), fore='cyan')
+        else:
+            formatnum = lambda ln: ln.ljust(digitlen)
+
+        # Set up the line formatter also.
+        if linenos:
+            formatline = lambda i, l: '{}: {}'.format(formatnum(str(i)), l)
+        else:
+            formatline = lambda i, l: l
+
+        # Print the lines.
         for i, line in enumerate(hcontent):
-            if linenos:
-                lineno = str(i + 1)
-                if usecolor:
-                    lineno = color(lineno.ljust(digitlen), fore='cyan')
-                print('{}: {}'.format(lineno, line))
-            else:
-                print(line)
+            print(formatline(i + 1, line))
 
         return True
 
@@ -180,6 +187,7 @@ def print_files(argd):
     formatter = try_formatter(stylename, background=config['background'])
     if not formatter:
         print_status('Invalid style name:', stylename)
+        return False
 
     if config['debug']:
         print_debug('linenos', config['linenos'] or 'False')
