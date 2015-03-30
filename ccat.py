@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'CCat'
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -90,7 +90,7 @@ def load_config(argd):
         print_status('Error loading config from:', CONFIG, exc=ex)
         return cmdline
     except ValueError as exparse:
-        print_status('Error parsing config from:', CONFIG, exc=ex)
+        print_status('Error parsing config from:', CONFIG, exc=exparse)
         return cmdline
 
     # Merge the dicts.
@@ -544,7 +544,7 @@ class ColorCodes(object):
         """
         try:
             ival = int(val)
-        except (TypeError, ValueError) as ex:
+        except (TypeError, ValueError):
             # Python 2 doesn't like 'raise e2 from e1'
             raise self.make_256error(colortype, val)
         else:
