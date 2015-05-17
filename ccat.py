@@ -19,6 +19,7 @@ VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
 
+# Beyond 80 chars, I know.
 USAGESTR = """{versionstr}
 Usage:
     {script} -h | -v
