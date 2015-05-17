@@ -223,7 +223,7 @@ def print_files(argd):
         formatfilename = lambda s: '\n{}:'.format(color(s, fore='blue'))
 
     def print_stdin_warn():
-        if config['debug']:
+        if config['debug'] and sys.stdin.isatty():
             print_status('\nUsing stdin, press CTRL + D for end of file.')
 
     def print_filename(s):
