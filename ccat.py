@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# [sublimelinter flake8-ignore: E501] ..ignore max-line-length warning.
 # -*- coding: utf-8 -*-
 
 """ ccat.py
