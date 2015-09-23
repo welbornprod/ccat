@@ -14,7 +14,7 @@ import docopt
 import pygments
 from pygments import formatters, lexers, styles
 
-NAME = 'CCat'
+NAME = 'ColorCat'
 VERSION = '0.1.2'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
@@ -24,8 +24,8 @@ SCRIPTDIR = os.path.abspath(sys.path[0])
 USAGESTR = """{versionstr}
 Usage:
     {script} -h | -v
-    {script} [FILE...] [-b style] [-C] [-D] [-g | -l name] [-n | -N] [-p] [-s name]
-    {script} -L | -S
+    {script} [FILE...] [-b style] [-C] [-D] [-f name] [-g | -l name] [-n | -N] [-p] [-s name]
+    {script} -F | -L | -S
 
 Options:
     FILE                         : One or many files to print.
@@ -35,6 +35,9 @@ Options:
                                    Changes the highlight style.
     -C,--nocolors                : Don't use colors?
     -D,--debug                   : Debug mode. Show more info.
+    -f name,--format name        : Format for output.
+                                   Default: terminal
+    -F,--formatters              : List all available formatters.
     -g,--guess                   : Guess lexer by file content.
     -h,--help                    : Show this help message.
     -l name,--lexer name         : Use this language/lexer name.
@@ -57,6 +60,21 @@ CONFIGOPTS = (
 )
 
 
+# Known terminal-friendly formatters.
+FORMATTERS = {
+    'terminal': {
+        'class': formatters.TerminalFormatter,
+    },
+    '256': {
+        'class': formatters.Terminal256Formatter,
+    },
+    'html': {
+        'class': formatters.HtmlFormatter,
+        'default_args': {'full': True},
+    }
+}
+
+
 def main(argd):
     """ Main entry point, expects doctopt arg dict as argd """
 
@@ -64,7 +82,8 @@ def main(argd):
         return 0 if print_lexers() else 1
     elif argd['--styles']:
         return 0 if print_styles() else 1
-
+    elif argd['--formatters']:
+        return 0 if print_formatters() else 1
     # Print files.
     return 0 if print_files(argd) else 1
 
@@ -106,14 +125,8 @@ def load_config(argd):
     if argd['--debug']:
         print_debug(
             'Config loaded from: {}'.format(CONFIG),
-            '\n{}'.format(json.dumps(config, indent=4, sort_keys=True)))
+            config)
     return merged
-
-
-def print_debug(lbl, value=None):
-    """ Prints a formatted debug msg. """
-    lbl = str(lbl).rjust(12)
-    print_status('{}:'.format(lbl), value=value)
 
 
 def pipe_file(fileobject):
@@ -128,6 +141,12 @@ def pipe_file(fileobject):
         print_stderr('Unable to read the file!: {}'.format(ex))
         return False
     return True
+
+
+def print_debug(lbl, value=None):
+    """ Prints a formatted debug msg. """
+    lbl = str(lbl).rjust(12)
+    print_status('{}:'.format(lbl), value=value)
 
 
 def print_file(fileobject, formatter, **kwargs):
@@ -164,18 +183,18 @@ def print_file(fileobject, formatter, **kwargs):
 
         if debug:
             print_debug('lexer', lexer.name)
-        hcontent = pygments.highlight(
+        hilitelines = pygments.highlight(
             content,
             lexer,
             formatter).split('\n')
         # An extra newline that 'cat' doesn't print.
-        if not hcontent[-1]:
-            hcontent.pop(-1)
+        if not hilitelines[-1]:
+            hilitelines.pop(-1)
     else:
-        hcontent = content.split('\n')
+        hilitelines = content.split('\n')
 
     # Helps to format the line numbers. 1234 = len('1234') = .ljust(4)
-    digitlen = len(str(len(hcontent)))
+    digitlen = len(str(len(hilitelines)))
     # Set up the line number formatter to reduce if statements in the loop.
     if usecolor:
         formatnum = lambda ln: color(ln.ljust(digitlen), fore='cyan')
@@ -189,7 +208,7 @@ def print_file(fileobject, formatter, **kwargs):
         formatline = lambda i, l: l
 
     # Print the lines.
-    for i, line in enumerate(hcontent):
+    for i, line in enumerate(hilitelines):
         print(formatline(i + 1, line))
 
     return True
@@ -198,26 +217,42 @@ def print_file(fileobject, formatter, **kwargs):
 def print_files(argd):
     """ Print several files at once. """
     config = load_config(argd)
-    isnotatty = not sys.stdout.isatty()
-    # Disable colors when piping output.
-    if isnotatty:
-        config['nocolors'] = True
+    stdout_tty = sys.stdout.isatty()
+    stdin_tty = sys.stdin.isatty()
 
     stylename = config['style'] or 'monokai'
-    formatter = try_formatter(stylename, background=config['background'])
+    userformatter = argd['--format'] or 'terminal'
+    if userformatter not in FORMATTERS:
+        print_status('Bad formatter name:', userformatter)
+        return False
+    # Html requires a default arg, an init arg, and piping is okay.
+    ishtml = formatted_pipe = (userformatter == 'html')
+    if ishtml:
+        # Formatter linenos, must be used with html instead of ccat linenos.
+        fmtargs = {'linenos': not config['nolinenos']}
+    else:
+        fmtargs = {}
+
+    formatter = try_formatter(
+        userformatter,
+        stylename,
+        background=config['background'],
+        args=fmtargs
+    )
     if not formatter:
         print_status('Invalid style name:', stylename)
         print_status('Use \'ccat --styles\' to list known style names.')
         return False
 
+    # Disable colors when piping output, unless the formatter will still work.
+    if not (stdout_tty or formatted_pipe):
+        config['nocolors'] = True
+
     if config['debug']:
         print_debug('linenos', config['linenos'] or 'False')
 
-    if config['nolinenos'] or isnotatty:
-        # Disable linenos automatically when piping output.
-        linenos = False
-    else:
-        linenos = config['linenos']
+    # Disable ccat linenos automatically when piping output or for html.
+    linenos = False if (config['nolinenos'] or ishtml) else config['linenos']
 
     if config['nocolors']:
         formatfilename = '\n{}:'.format
@@ -225,7 +260,7 @@ def print_files(argd):
         formatfilename = lambda s: '\n{}:'.format(color(s, fore='blue'))
 
     def print_stdin_warn():
-        if config['debug'] and sys.stdin.isatty():
+        if config['debug'] and stdin_tty:
             print_status('\nUsing stdin, press CTRL + D for end of file.')
 
     def print_filename(s):
@@ -275,7 +310,8 @@ def print_files(argd):
             try:
                 with open(filename, 'r') as fileobj:
                     print_filename(filename)
-                    if isnotatty:
+                    if not (stdout_tty or formatted_pipe):
+                        # Html is fine to pipe, but terminal colors are not.
                         results.append(pipe_file(fileobj))
                     else:
                         results.append(print_file(fileobj, **printargs))
@@ -283,6 +319,14 @@ def print_files(argd):
                 print_status('Unable to read file:', filename, exc=ex)
 
     return save_config(config) and all(results)
+
+
+def print_formatters():
+    """ Print all known formatters. """
+    # These are terminal-friendly formatters, there are many others.
+    print('\nAvailable formatters:')
+    print('    {}'.format('\n    '.join(FORMATTERS)))
+    return True
 
 
 def print_lexers():
@@ -307,18 +351,35 @@ def print_status(msg, value=None, exc=None):
             exc   : An exception. If set, the msg/value is red and the
                     exception is printed in bold red.
     """
+    if sys.stdout.isatty():
+        f = sys.stdout
+    elif sys.stderr.isatty():
+        f = sys.stderr
+    else:
+        # Nothing to print to.
+        return None
 
     if exc:
         msg = color(msg, fore='red')
         if value is not None:
             msg = ' '.join((msg, color(str(value), fore='red', style='bold')))
-        print('\n{}'.format(msg))
-        print('{}\n'.format(color(str(exc), fore='red', style='bold')))
+        print('\n{}'.format(msg), file=f)
+        print('{}\n'.format(color(str(exc), fore='red', style='bold')), file=f)
     else:
         msg = color(msg, fore='cyan')
-        if value is not None:
+
+        if isinstance(value, (list, tuple, dict)):
+            msg = ' '.join((
+                msg,
+                '\n{}'.format(
+                    color(
+                        json.dumps(value, indent=4, sort_keys=True),
+                        fore='blue')
+                )
+            ))
+        else:
             msg = ' '.join((msg, color(str(value), fore='blue', style='bold')))
-        print(msg)
+        print(msg, file=f)
 
 
 def print_stderr(*args, **kwargs):
@@ -347,7 +408,7 @@ def save_config(config):
     return True
 
 
-def try_formatter(stylename, background=None):
+def try_formatter(formattername, stylename, background=None, args=None):
     """ Try getting a Formatter() to use with a style and optional bg style.
         Arguments:
             stylename  : A valid pygments style name.
@@ -361,11 +422,21 @@ def try_formatter(stylename, background=None):
         'none': 'dark'
     }
     bgstyle = bgstyles.get(str(background).lower(), bgstyles['none'])
+    # Any passed-in formatter args.
+    formatterargs = args.copy() if args else {}
+    # Custom style arguments.
+    formatterargs.update({
+        'bg': bgstyle,
+        'style': stylename.lower()
+    })
+    # Default formatter-based arguments.
+    formatterargs.update(FORMATTERS[formattername].get('default_args', {}))
+    formattername = formattername or 'terminal'
+    formattercls = FORMATTERS[formattername]['class']
 
+    print_debug('formatter args for {}'.format(formattername), formatterargs)
     try:
-        formatter = formatters.TerminalFormatter(
-            bg=bgstyle,
-            style=stylename.lower())
+        formatter = formattercls(**formatterargs)
     except pygments.util.ClassNotFound:
         return None
     return formatter
@@ -608,8 +679,12 @@ class ColorCodes(object):
         return '{}{}'.format(spacing, colored)
 
 # Alias, convenience function for ColorCodes().
-colorize = ColorCodes()
-color = colorize.colorword
+if sys.stdout.isatty():
+    colorize = ColorCodes()
+    color = colorize.colorword
+else:
+    def color(text='', **kwargs):
+        return text
 
 
 class _ColorDocoptExit(SystemExit):
