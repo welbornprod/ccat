@@ -15,7 +15,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.1.2'
+VERSION = '0.2.0'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
