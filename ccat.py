@@ -55,6 +55,7 @@ CONFIG = os.path.join(SCRIPTDIR, 'ccat.json')
 # Config options that can be saved and reloaded for later.
 CONFIGOPTS = (
     'background',
+    'format',
     'linenos',
     'style'
 )
@@ -227,7 +228,7 @@ def print_files(argd):
     stdin_tty = sys.stdin.isatty()
 
     stylename = config['style'] or 'monokai'
-    userformatter = argd['--format'] or 'terminal'
+    userformatter = config['format'] or 'terminal'
     if userformatter not in FORMATTERS:
         print_status('Bad formatter name:', userformatter)
         return False
@@ -409,7 +410,7 @@ def save_config(config):
         with open(CONFIG, 'w') as f:
             json.dump(config, f, indent=4, sort_keys=True)
     except TypeError as ex:
-        print_status('Error saving config to:', CONFIG, exc=ex)
+        print_stderr('Error saving config to:', CONFIG, exc=ex)
         return False
     return True
 
