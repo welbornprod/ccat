@@ -74,6 +74,8 @@ FORMATTERS = {
     }
 }
 
+DEBUG = False
+
 
 def main(argd):
     """ Main entry point, expects doctopt arg dict as argd """
@@ -99,6 +101,7 @@ def filename_is_stdin(s):
 def load_config(argd):
     """ Load settings from the config file, override them with cmdline options.
     """
+    global DEBUG
     cmdline = {k.lstrip('-'): v for k, v in argd.items()}
     if not os.path.exists(CONFIG):
         return cmdline
@@ -123,6 +126,7 @@ def load_config(argd):
             merged[k] = v
     # Signal that the config was loaded from file.
     if argd['--debug']:
+        DEBUG = True
         print_debug(
             'Config loaded from: {}'.format(CONFIG),
             config)
@@ -145,8 +149,9 @@ def pipe_file(fileobject):
 
 def print_debug(lbl, value=None):
     """ Prints a formatted debug msg. """
-    lbl = str(lbl).rjust(12)
-    print_status('{}:'.format(lbl), value=value)
+    if DEBUG:
+        lbl = str(lbl).rjust(12)
+        print_status('{}:'.format(lbl), value=value)
 
 
 def print_file(fileobject, formatter, **kwargs):
@@ -159,12 +164,10 @@ def print_file(fileobject, formatter, **kwargs):
                           (saves from creating a formatter on each file)
         Keyword Arguments:
             linenos     : Print line numbers.
-            debug       : Print extra debugging info.
             usecolor    : Use colors. This is ccat, not cat. Default: True
     """
     lexer = kwargs.get('lexer', None)
     linenos = kwargs.get('linenos', False)
-    debug = kwargs.get('debug', False)
     usecolor = kwargs.get('usecolor', True)
     if not formatter:
         raise ValueError('Need a formatter to use.')
@@ -177,12 +180,10 @@ def print_file(fileobject, formatter, **kwargs):
 
     if usecolor:
         if not lexer:
-            if debug:
-                print_debug('guessed', True)
+            print_debug('guessed', True)
             lexer = try_lexer_guess(content)
 
-        if debug:
-            print_debug('lexer', lexer.name)
+        print_debug('lexer', lexer.name)
         hilitelines = pygments.highlight(
             content,
             lexer,
@@ -192,6 +193,11 @@ def print_file(fileobject, formatter, **kwargs):
             hilitelines.pop(-1)
     else:
         hilitelines = content.split('\n')
+
+    # Fix line number style for certain formatter styles.
+    if isinstance(formatter, formatters.HtmlFormatter):
+        hilitelines.append(
+            '<style>td.linenos { background-color: transparent; }</style>')
 
     # Helps to format the line numbers. 1234 = len('1234') = .ljust(4)
     digitlen = len(str(len(hilitelines)))
