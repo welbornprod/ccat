@@ -384,7 +384,7 @@ def print_status(msg, value=None, exc=None):
                         fore='blue')
                 )
             ))
-        else:
+        elif value:
             msg = ' '.join((msg, color(str(value), fore='blue', style='bold')))
         print(msg, file=f)
 
