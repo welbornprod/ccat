@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# [sublimelinter flake8-ignore: E501] ..ignore max-line-length warning.
 # -*- coding: utf-8 -*-
 
 """ ccat.py
@@ -15,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.2.1'
+VERSION = '0.2.2'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -24,7 +23,8 @@ SCRIPTDIR = os.path.abspath(sys.path[0])
 USAGESTR = """{versionstr}
 Usage:
     {script} -h | -v
-    {script} [FILE...] [-b style] [-C] [-D] [-f name] [-g | -l name] [-n | -N] [-p] [-s name]
+    {script} [FILE...] [-b style] [-f name] [-g | -l name] [-s name]
+         [-C] [-D] [-n | -N] [-p]
     {script} -F | -L | -S
 
 Options:
@@ -495,7 +495,9 @@ def try_lexer(name, filename=None):
 
 
 class ColorCodes(object):
-
+    # FIXME: The 'Colr' library may be used in the future, it provides several
+    #        more options when working with colored output on linux.
+    #        (this class was the starting point for Colr. Much has changed.)
     """ This class colorizes text for an ansi terminal.
         Inspired by Colorama (though very different)
     """
