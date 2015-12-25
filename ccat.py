@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.2.2'
+VERSION = '0.2.3'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -24,7 +24,7 @@ USAGESTR = """{versionstr}
 Usage:
     {script} -h | -v
     {script} [FILE...] [-b style] [-f name] [-g | -l name] [-s name]
-         [-C] [-D] [-n | -N] [-p]
+         [-c | -C] [-D] [-n | -N] [-p]
     {script} -F | -L | -S
 
 Options:
@@ -33,6 +33,7 @@ Options:
                                    use stdin.
     -b style,--background style  : Either 'light', or 'dark'.
                                    Changes the highlight style.
+    -c,--colors                  : Force colors, even when piping output.
     -C,--nocolors                : Don't use colors?
     -D,--debug                   : Debug mode. Show more info.
     -f name,--format name        : Format for output.
@@ -99,6 +100,51 @@ def filename_is_stdin(s):
     return (not s) or (s == '-')
 
 
+def handle_file(filename, config):
+    """ Use `print_file` to print a single file, and print any errors.
+        A valid config object must be passed, given from parse_printer_config.
+    """
+    try:
+        with open(filename, 'r') as f:
+            if config['printnames']:
+                print(config['formatfilename'](filename))
+            if config['nocolors']:
+                # Colors have been disabled, there is no reason to
+                # use pygments at this point.
+                return pipe_file(f, **config['printargs'])
+
+            return print_file(f, **config['printargs'])
+    except EnvironmentError as ex:
+        print_status('Unable to read file:', filename, exc=ex)
+    return False
+
+
+def handle_stdin(config):
+    """ Use `print_file` to handle stdin input, and print any errors.
+        A valid config object must be passed, given from parse_printer_config.
+    """
+    if handle_stdin.handled:
+        if config['debug']:
+            print_status('stdin was already read, skipping.')
+        return False
+
+    if config['stdin_tty'] and config['stdout_tty']:
+        print_status('\nUsing stdin, press CTRL + D for end of file.')
+
+    if config['printnames']:
+        print(config['formatfilename']('stdin'))
+    handle_stdin.handled = True
+
+    if config['nocolors']:
+        # No colors, no pygments.
+        return pipe_file(sys.stdin, **config['printargs'])
+    return print_file(sys.stdin, **config['printargs'])
+
+# Only read stdin once, but can be mixed in with other files.
+# This is set to True if stdin has been read already.
+handle_stdin.handled = False
+
+
 def load_config(argd):
     """ Load settings from the config file, override them with cmdline options.
     """
@@ -134,104 +180,37 @@ def load_config(argd):
     return merged
 
 
-def pipe_file(fileobject):
-    """ Just print the file to stdout. No formatting or anything.
-        Arguments:
-            fileobject  : An open d to read from.
+def parse_printer_config(argd):
+    """ Parse user args into usable objects for `print_files` and `print_file`.
+        Returns None on error.
+        On success returns a dict of:
+            {
+                'background' : Name of background style.
+                'debug'      : Whether to print debug info.
+                'FILE'       : List of file names to print, where a None name
+                               means to use stdin.
+                'format'     : Name of formatter.
+                'nocolors'   : Whether to pipe output without pygments.
+                'stdin_tty'  : Whether stdin is a tty.
+                'stdout_tty' : Whether stdout is a tty.
+                'style'      : Style name for formatter.
+                'printargs'  : Arguments for `print_file`:
+                    {
+                        'debug'    : Whether to print debug info.
+                        'formatter': A pygments Formatter().
+                        'linenos'  : Whether to print line numbers.
+                    }
+            }
     """
-    try:
-        for line in fileobject:
-            print(line, end='')
-    except Exception as ex:
-        print_stderr('Unable to read the file!: {}'.format(ex))
-        return False
-    return True
-
-
-def print_debug(lbl, value=None):
-    """ Prints a formatted debug msg. """
-    if DEBUG:
-        lbl = str(lbl).rjust(12)
-        print_status('{}:'.format(lbl), value=value)
-
-
-def print_file(fileobject, formatter, **kwargs):
-    """ Print a file's content with highlighting.
-        Arguments:
-            fileobject  : An open fd to read from.
-            lexer       : A Pygments Lexer(), pre-initialized.
-                          If None, then guess the lexer based on content.
-            formatter   : A Pygments Formatter(), pre-initialized.
-                          (saves from creating a formatter on each file)
-        Keyword Arguments:
-            linenos     : Print line numbers.
-            usecolor    : Use colors. This is ccat, not cat. Default: True
-    """
-    lexer = kwargs.get('lexer', None)
-    linenos = kwargs.get('linenos', False)
-    usecolor = kwargs.get('usecolor', True)
-    if not formatter:
-        raise ValueError('Need a formatter to use.')
-
-    try:
-        content = fileobject.read()
-    except Exception as ex:
-        print_status('Unable to read the file!:', exc=ex)
-        return False
-
-    if usecolor:
-        if not lexer:
-            print_debug('guessed', True)
-            lexer = try_lexer_guess(content)
-
-        print_debug('lexer', lexer.name)
-        hilitelines = pygments.highlight(
-            content,
-            lexer,
-            formatter).split('\n')
-        # An extra newline that 'cat' doesn't print.
-        if not hilitelines[-1]:
-            hilitelines.pop(-1)
-    else:
-        hilitelines = content.split('\n')
-
-    # Fix line number style for certain formatter styles.
-    if isinstance(formatter, formatters.HtmlFormatter):
-        hilitelines.append(
-            '<style>td.linenos { background-color: transparent; }</style>')
-
-    # Helps to format the line numbers. 1234 = len('1234') = .ljust(4)
-    digitlen = len(str(len(hilitelines)))
-    # Set up the line number formatter to reduce if statements in the loop.
-    if usecolor:
-        formatnum = lambda ln: color(ln.ljust(digitlen), fore='cyan')
-    else:
-        formatnum = lambda ln: ln.ljust(digitlen)
-
-    # Set up the line formatter also.
-    if linenos:
-        formatline = lambda i, l: '{}: {}'.format(formatnum(str(i)), l)
-    else:
-        formatline = lambda i, l: l
-
-    # Print the lines.
-    for i, line in enumerate(hilitelines):
-        print(formatline(i + 1, line))
-
-    return True
-
-
-def print_files(argd):
-    """ Print several files at once. """
     config = load_config(argd)
-    stdout_tty = sys.stdout.isatty()
-    stdin_tty = sys.stdin.isatty()
+    config['stdout_tty'] = sys.stdout.isatty()
+    config['stdin_tty'] = sys.stdin.isatty()
 
     stylename = config['style'] or 'monokai'
     userformatter = config['format'] or 'terminal'
     if userformatter not in FORMATTERS:
         print_status('Bad formatter name:', userformatter)
-        return False
+        return None
     # Html requires a default arg, an init arg, and piping is okay.
     ishtml = formatted_pipe = (userformatter == 'html')
     if ishtml:
@@ -249,11 +228,12 @@ def print_files(argd):
     if not formatter:
         print_status('Invalid style name:', stylename)
         print_status('Use \'ccat --styles\' to list known style names.')
-        return False
+        return None
 
     # Disable colors when piping output, unless the formatter will still work.
-    if not (stdout_tty or formatted_pipe):
-        config['nocolors'] = True
+    if not (config['stdout_tty'] or formatted_pipe):
+        # Html output is fine to pipe, or forced --colors.
+        config['nocolors'] = not config['colors']
 
     if config['debug']:
         print_debug('linenos', config['linenos'] or 'False')
@@ -261,69 +241,166 @@ def print_files(argd):
     # Disable ccat linenos automatically when piping output or for html.
     linenos = False if (config['nolinenos'] or ishtml) else config['linenos']
 
-    if config['nocolors']:
-        formatfilename = '\n{}:'.format
-    else:
-        formatfilename = lambda s: '\n{}:'.format(color(s, fore='blue'))
-
-    def print_stdin_warn():
-        if config['debug'] and stdin_tty:
-            print_status('\nUsing stdin, press CTRL + D for end of file.')
-
-    def print_filename(s):
-        """ Helper function, prints file names if --printnames is used """
-        if config['printnames']:
-            print(formatfilename(s))
-
     if not config['FILE']:
         # No file names. Use stdin.
         config['FILE'] = [None]
 
+    if config['nocolors']:
+        config['formatfilename'] = '\n{}:'.format
+    else:
+        config['formatfilename'] = (
+            lambda s: '\n{}:'.format(color(s, fore='blue')))
+
     # Arguments that apply to all files.
-    printargs = {
+    config['printargs'] = {
         'formatter': formatter,
         'linenos': linenos,
         'debug': config['debug'],
-        'usecolor': not config['nocolors']
     }
+    if DEBUG:
+        skip_names = ('formatfilename', 'printargs')
+        print_debug(
+            'Final printer config',
+            {k: v for k, v in config.items() if k not in skip_names})
+    return config
+
+
+def pipe_file(fileobject, **kwargs):
+    """ Just print the file to stdout. No formatting or anything.
+        Arguments:
+            fileobject  : An open fd to read from.
+
+        Keyword Arguments:
+            linenos     : Whether to print line numbers.
+    """
+    if not kwargs.get('linenos', False):
+        # Straight piping.
+        return pipe_file_simple(fileobject)
+    return pipe_file_linenos(fileobject)
+
+
+def pipe_file_linenos(fileobject):
+    """ Straight file -> stdout pipine, with line numbers. """
+    print_debug('Piping file with line numbers...')
+    try:
+        lines = fileobject.readlines()
+    except Exception as ex:
+        print_stderr('Unable to read the file: {}\n{}'.format(
+            fileobject.name,
+            ex))
+        return False
+
+    width = len(str(len(lines)))
+    for i, line in enumerate(lines):
+        print('{}: {}'.format(str(i).zfill(width), line), end='')
+
+    return True
+
+
+def pipe_file_simple(fileobject):
+    """ Straight file -> stdout piping. No frills/customization. """
+    print_debug('Piping file...')
+    try:
+        sys.stdout.buffer.write(fileobject.buffer.read())
+    except EnvironmentError as ex:
+        print_stderr('Unable to read the file: {}\n{}'.format(
+            fileobject.name,
+            ex))
+        return False
+    return True
+
+
+def print_debug(lbl, value=None):
+    """ Prints a formatted debug msg. """
+    if DEBUG:
+        if value:
+            lbl = str(lbl).rjust(12)
+            print_status('{}:'.format(lbl), value=value)
+        else:
+            print_status(str(lbl))
+
+
+def print_file(fileobject, formatter, **kwargs):
+    """ Print a file's content with highlighting.
+        Arguments:
+            fileobject  : An open fd to read from.
+            lexer       : A Pygments Lexer(), pre-initialized.
+                          If None, then guess the lexer based on content.
+            formatter   : A Pygments Formatter(), pre-initialized.
+                          (saves from creating a formatter on each file)
+        Keyword Arguments:
+            linenos     : Print line numbers.
+    """
+    lexer = kwargs.get('lexer', None)
+    linenos = kwargs.get('linenos', False)
+
+    if not formatter:
+        raise ValueError('Need a formatter to use.')
+
+    try:
+        content = fileobject.read()
+    except Exception as ex:
+        print_status('Unable to read the file!:', exc=ex)
+        return False
+
+    if not lexer:
+        print_debug('guessed', True)
+        # try_lexer_guess() will fall back to 'text' lexer.
+        lexer = try_lexer_guess(content)
+
+    print_debug('lexer', lexer.name)
+    hilitelines = pygments.highlight(
+        content,
+        lexer,
+        formatter).splitlines()
+    # An extra newline that 'cat' doesn't print.
+    if not hilitelines[-1]:
+        hilitelines.pop(-1)
+
+    # Fix line number style for certain formatter styles.
+    if isinstance(formatter, formatters.HtmlFormatter):
+        # FIXME: Hack linenos style to match the main style.
+        hilitelines.append(
+            '<style>td.linenos { background-color: transparent; }</style>')
+
+    # Set up the line formatter also.
+    if linenos:
+        # Helps to format the line numbers. 1234 = len('1234') = .zfill(4)
+        width = len(str(len(hilitelines)))
+        # Set up the line number formatter to reduce if statements in the loop.
+        formatnum = lambda ln: color(ln.zfill(width), fore='cyan')
+        formatline = lambda i, l: '{}: {}'.format(formatnum(str(i)), l)
+    else:
+        formatline = lambda i, l: l
+
+    # Print the lines.
+    for i, line in enumerate(hilitelines):
+        print(formatline(i + 1, line))
+
+    return True
+
+
+def print_files(argd):
+    """ Print several files at once. Parses user string args into usable
+        objects for `print_file` (Lexer(), Formatter()).
+        Decides whether to disable all lexing (just piping input/output).
+        Returns True for success, or False for errors (which are printed).
+        Arguments:
+            argd  : A docopt arg dict from the command line.
+    """
+    config = parse_printer_config(argd)
+    if not config:
+        # Any user arg errors have been printed, just return.
+        return False
 
     results = []
-    # Only read stdin once, but can be mixed in with other files.
-    # This is set to True if stdin has been read already.
-    stdin_read = False
-
     for filename in config['FILE']:
-        usestdin = filename_is_stdin(filename)
-        if config['guess']:
-            printargs['lexer'] = None
-        else:
-            printargs['lexer'] = try_lexer(config['lexer'], filename=filename)
-
-        if config['lexer'] and not printargs['lexer']:
-            print_status('Bad lexer name:', config['lexer'])
-            print_status('Use \'ccat --lexers\' to list known lexer names.')
+        if not set_lexer(filename, config):
             return False
-
-        if usestdin:
-            if stdin_read:
-                if config['debug']:
-                    print_status('stdin was already read, skipping.')
-                continue
-            print_stdin_warn()
-            print_filename('stdin')
-            results.append(print_file(sys.stdin, **printargs))
-            stdin_read = True
+        if filename_is_stdin(filename):
+            results.append(handle_stdin(config))
         else:
-            try:
-                with open(filename, 'r') as fileobj:
-                    print_filename(filename)
-                    if not (stdout_tty or formatted_pipe):
-                        # Html is fine to pipe, but terminal colors are not.
-                        results.append(pipe_file(fileobj))
-                    else:
-                        results.append(print_file(fileobj, **printargs))
-            except EnvironmentError as ex:
-                print_status('Unable to read file:', filename, exc=ex)
+            results.append(handle_file(filename, config))
 
     return save_config(config) and all(results)
 
@@ -363,16 +440,21 @@ def print_status(msg, value=None, exc=None):
     elif sys.stderr.isatty():
         f = sys.stderr
     else:
-        # Nothing to print to.
+        # Nothing to print to,
+        # status messages aren't important enough to be piped to file.
         return None
 
     if exc:
+        # An error message, coming from an Exception.
         msg = color(msg, fore='red')
         if value is not None:
             msg = ' '.join((msg, color(str(value), fore='red', style='bold')))
-        print('\n{}'.format(msg), file=f)
-        print('{}\n'.format(color(str(exc), fore='red', style='bold')), file=f)
+        print('\n{}'.format(msg), file=sys.stderr)
+        print('{}\n'.format(
+            color(str(exc), fore='red', style='bold')),
+            file=sys.stderr)
     else:
+        # A normal msg, printed to the first available terminal.
         msg = color(msg, fore='cyan')
 
         if isinstance(value, (list, tuple, dict)):
@@ -391,7 +473,8 @@ def print_status(msg, value=None, exc=None):
 
 def print_stderr(*args, **kwargs):
     """ A print that uses sys.stderr instead of stdout. No formatting. """
-    kwargs['file'] = sys.stderr
+    if kwargs.get('file', None) is None:
+        kwargs['file'] = sys.stderr
     print(*args, **kwargs)
 
 
@@ -412,6 +495,34 @@ def save_config(config):
     except TypeError as ex:
         print_stderr('Error saving config to:', CONFIG, exc=ex)
         return False
+    return True
+
+
+def set_lexer(filename, config):
+    """ Set the printargs Lexer() for an individual file.
+        A valid config object must be passed, given from parse_printer_config.
+        Returns True on success, or False on fatal error.
+    """
+    if config['guess']:
+        # Forced guess from the user.
+        # print_file() will try to guess the lexer from the content.
+        config['printargs']['lexer'] = None
+        return True
+
+    if config['lexer']:
+        # Transform the user's lexer name into a real Lexer().
+        config['printargs']['lexer'] = try_lexer(
+            config['lexer'],
+            filename=filename)
+        if config['printargs']['lexer']:
+            return True
+        else:
+            # Lexer name was not transformed into a real Lexer().
+            print_status('Bad lexer name:', config['lexer'])
+            print_status('Use \'ccat --lexers\' to list known lexer names.')
+            return False
+    # No lexer name was given, guess it.
+    config['printargs']['lexer'] = None
     return True
 
 
@@ -557,8 +668,6 @@ class ColorCodes(object):
 
         # Shortcuts to most used functions.
         self.word = self.colorword
-        self.ljust = self.wordljust
-        self.rjust = self.wordrjust
 
     def color_code(self, fore=None, back=None, style=None):
         """ Return the code for this style/color
@@ -651,49 +760,8 @@ class ColorCodes(object):
             'Must be in range 0-255'))
         return ColorCodes.Invalid256Color(errmsg)
 
-    def wordljust(self, text=None, length=0, char=' ', **kwargs):
-        """ Color a word and left justify it.
-            Regular str.ljust won't work properly on a str with color codes.
-            You can do colorword(s.ljust(length), fore='red') though.
-            This adds the space before the color codes.
-            Arguments:
-                text    : text to colorize.
-                length  : overall length after justification.
-                char    : character to use for padding. Default: ' '
-
-            Keyword Arguments:
-                fore, back, style : same as colorizepart() and word()
-        """
-        text = text or ''
-        spacing = char * (length - len(text))
-        colored = self.colorword(text=text, **kwargs)
-        return '{}{}'.format(colored, spacing)
-
-    def wordrjust(self, text=None, length=0, char=' ', **kwargs):
-        """ Color a word and right justify it.
-            Regular str.rjust won't work properly on a str with color codes.
-            You can do colorword(s.rjust(length), fore='red') though.
-            This adds the space before the color codes.
-            Arguments:
-                text    : text to colorize.
-                length  : overall length after justification.
-                char    : character to use for padding. Default: ' '
-
-            Keyword Arguments:
-                fore, back, style : same as colorizepart() and word()
-        """
-        text = text or ''
-        spacing = char * (length - len(text))
-        colored = self.word(text=text, **kwargs)
-        return '{}{}'.format(spacing, colored)
-
 # Alias, convenience function for ColorCodes().
-if sys.stdout.isatty():
-    colorize = ColorCodes()
-    color = colorize.colorword
-else:
-    def color(text='', **kwargs):
-        return text
+color = ColorCodes().colorword
 
 
 class _ColorDocoptExit(SystemExit):
