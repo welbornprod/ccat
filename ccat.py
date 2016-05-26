@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.2.3'
+VERSION = '0.2.4'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -98,6 +98,28 @@ def filename_is_stdin(s):
         Other names may be added in the future.
     """
     return (not s) or (s == '-')
+
+
+def get_line_formatter(maxnum, linenos=True):
+    """ Return a function to format a single line of output,
+        with optional line numbers.
+        Arguments:
+            maxnum   : Largest line number encountered (len(lines)).
+            linenos  : Whether to include line numbers.
+    """
+    if linenos:
+        # Helps to format the line numbers. 1234 = len('1234') = .zfill(4)
+        width = len(str(maxnum))
+
+        def formatline(i, l):
+            """ Line formatter, with line numbers. """
+            return '{}: {}'.format(color(ln.zfill(width), fore='cyan'), l)
+        return formatline
+
+    def formatline(i, l):
+        """ Plain line formatter, no line numbers. """
+        return l
+    return formatline
 
 
 def handle_file(filename, config):
@@ -364,14 +386,7 @@ def print_file(fileobject, formatter, **kwargs):
             '<style>td.linenos { background-color: transparent; }</style>')
 
     # Set up the line formatter also.
-    if linenos:
-        # Helps to format the line numbers. 1234 = len('1234') = .zfill(4)
-        width = len(str(len(hilitelines)))
-        # Set up the line number formatter to reduce if statements in the loop.
-        formatnum = lambda ln: color(ln.zfill(width), fore='cyan')
-        formatline = lambda i, l: '{}: {}'.format(formatnum(str(i)), l)
-    else:
-        formatline = lambda i, l: l
+    formatline = get_line_formatter(len(hilitelines), linenos=linenos)
 
     # Print the lines.
     for i, line in enumerate(hilitelines):
@@ -416,7 +431,11 @@ def print_formatters():
 def print_lexers():
     """ Print all known lexer names. """
     print('\nLexer names:')
-    fmtlabel = lambda lbl, ns: '    {}: {}'.format(lbl, ', '.join(sorted(ns)))
+
+    def fmtlabel(lbl, ns):
+        """ Format a label/list-items pair. """
+        return '    {}: {}'.format(lbl, ', '.join(sorted(ns)))
+
     for lexerid in sorted(lexers.LEXERS, key=lambda k: lexers.LEXERS[k][1]):
         _, propername, names, types, __ = lexers.LEXERS[lexerid]
         print('\n{}'.format(propername))
@@ -431,7 +450,8 @@ def print_status(msg, value=None, exc=None):
     """ Prints a color-coded status message.
         Arguments:
             msg   : Standard message to print.
-            value : Extra value to print, makes 'msg' the label for this value.
+            value : Extra value to print.
+                    This makes 'msg' the label for this value.
             exc   : An exception. If set, the msg/value is red and the
                     exception is printed in bold red.
     """
@@ -467,7 +487,10 @@ def print_status(msg, value=None, exc=None):
                 )
             ))
         elif value:
-            msg = ' '.join((msg, color(str(value), fore='blue', style='bold')))
+            msg = ' '.join((
+                msg,
+                color(str(value), fore='blue', style='bold')
+            ))
         print(msg, file=f)
 
 
@@ -720,11 +743,17 @@ class ColorCodes(object):
     def colorword(self, text=None, fore=None, back=None, style=None):
         """ Same as colorize, but adds a style->reset_all after it. """
         text = text or ''
-        colorized = self.colorize(text=text, style=style, back=back, fore=fore)
+        colorized = self.colorize(
+            text=text,
+            style=style,
+            back=back,
+            fore=fore
+        )
         s = ''.join((
             colorized,
             self.color_code(style='reset_all'),
-            self.closing))
+            self.closing
+        ))
         return s
 
     def make_256color(self, colortype, val):
@@ -820,11 +849,12 @@ def _coloredhelp(s):
     return '\n'.join(newlines)
 
 
-def _docoptextras(help, version, options, doc):
-    if help and any((o.name in ('-h', '--help')) and o.value for o in options):
+def _docoptextras(help_, version, options, doc):
+    help_arg = any((o.name in ('-h', '--help')) and o.value for o in options)
+    if help_ and help_arg:
         print(_coloredhelp(doc).strip('\n'))
         sys.exit()
-    if version and any(o.name == '--version' and o.value for o in options):
+    if version and any((o.name == '--version') and o.value for o in options):
         print(color(version, 'blue'))
         sys.exit()
 
