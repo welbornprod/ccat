@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.2.4'
+VERSION = '0.2.5'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -113,7 +113,7 @@ def get_line_formatter(maxnum, linenos=True):
 
         def formatline(i, l):
             """ Line formatter, with line numbers. """
-            return '{}: {}'.format(color(ln.zfill(width), fore='cyan'), l)
+            return '{}: {}'.format(color(str(i).zfill(width), fore='cyan'), l)
         return formatline
 
     def formatline(i, l):
