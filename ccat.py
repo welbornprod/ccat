@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.2.5'
+VERSION = '0.2.6'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -410,6 +410,11 @@ def print_files(argd):
 
     results = []
     for filename in config['FILE']:
+        try:
+            filename = filename.strip()
+        except AttributeError:
+            # Filename is None.
+            pass
         if not set_lexer(filename, config):
             return False
         if filename_is_stdin(filename):
@@ -534,16 +539,17 @@ def set_lexer(filename, config):
 
     if config['lexer']:
         # Transform the user's lexer name into a real Lexer().
+        # Filename may be stdin (None, or '-', or anything falsey).
         config['printargs']['lexer'] = try_lexer(
             config['lexer'],
             filename=filename)
         if config['printargs']['lexer']:
             return True
-        else:
-            # Lexer name was not transformed into a real Lexer().
-            print_status('Bad lexer name:', config['lexer'])
-            print_status('Use \'ccat --lexers\' to list known lexer names.')
-            return False
+
+        # Lexer name was not transformed into a real Lexer().
+        print_status('Bad lexer name:', config['lexer'])
+        print_status('Use \'ccat --lexers\' to list known lexer names.')
+        return False
     # No lexer name was given, guess it.
     config['printargs']['lexer'] = None
     return True
