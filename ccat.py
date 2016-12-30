@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.2.6'
+VERSION = '0.3.0'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -24,7 +24,7 @@ USAGESTR = """{versionstr}
 Usage:
     {script} -h | -v
     {script} [FILE...] [-b style] [-f name] [-g | -l name] [-s name]
-         [-c | -C] [-D] [-n | -N] [-p]
+         [-c | -C] [-D] [-n | -N] [-p] [--nosave]
     {script} -F | -L | -S
 
 Options:
@@ -46,6 +46,7 @@ Options:
     -n,--linenos                 : Print line numbers.
     -N,--nolinenos               : Don't print line numbers.
                                    Overrides config setting.
+    --nosave                     : Don't save options in config file.
     -p,--printnames              : Print file names.
     -s name,--style name         : Use this pygments style name.
     -S,--styles                  : List all known style names.
@@ -161,6 +162,7 @@ def handle_stdin(config):
         # No colors, no pygments.
         return pipe_file(sys.stdin, **config['printargs'])
     return print_file(sys.stdin, **config['printargs'])
+
 
 # Only read stdin once, but can be mixed in with other files.
 # This is set to True if stdin has been read already.
@@ -422,7 +424,9 @@ def print_files(argd):
         else:
             results.append(handle_file(filename, config))
 
-    return save_config(config) and all(results)
+    if not argd['--nosave']:
+        return save_config(config) and all(results)
+    return all(results)
 
 
 def print_formatters():
@@ -795,6 +799,7 @@ class ColorCodes(object):
             'Must be in range 0-255'))
         return ColorCodes.Invalid256Color(errmsg)
 
+
 # Alias, convenience function for ColorCodes().
 color = ColorCodes().colorword
 
@@ -863,6 +868,7 @@ def _docoptextras(help_, version, options, doc):
     if version and any((o.name == '--version') and o.value for o in options):
         print(color(version, 'blue'))
         sys.exit()
+
 
 # Functions to override default docopt stuff
 docopt.DocoptExit = _ColorDocoptExit
