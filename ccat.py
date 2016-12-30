@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.3.0'
+VERSION = '0.3.1'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -90,7 +90,9 @@ def main(argd):
     elif argd['--formatters']:
         return 0 if print_formatters() else 1
     # Print files.
-    return 0 if print_files(argd) else 1
+    if argd['--nosave']:
+        return 0 if print_files(argd) else 1
+    return 0 if (save_config(argd) and print_files(argd)) else 1
 
 
 def filename_is_stdin(s):
@@ -424,8 +426,6 @@ def print_files(argd):
         else:
             results.append(handle_file(filename, config))
 
-    if not argd['--nosave']:
-        return save_config(config) and all(results)
     return all(results)
 
 
