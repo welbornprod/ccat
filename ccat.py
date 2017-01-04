@@ -14,7 +14,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.3.1'
+VERSION = '0.4.0'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -61,7 +61,7 @@ CONFIGOPTS = (
     'linenos',
     'style'
 )
-
+NON_JSON_KEYS = {'formatfilename', 'printargs'}
 
 # Known terminal-friendly formatters.
 FORMATTERS = {
@@ -82,7 +82,6 @@ DEBUG = False
 
 def main(argd):
     """ Main entry point, expects doctopt arg dict as argd """
-
     if argd['--lexers']:
         return 0 if print_lexers() else 1
     elif argd['--styles']:
@@ -90,9 +89,10 @@ def main(argd):
     elif argd['--formatters']:
         return 0 if print_formatters() else 1
     # Print files.
+    config = parse_printer_config(argd)
     if argd['--nosave']:
-        return 0 if print_files(argd) else 1
-    return 0 if (save_config(argd) and print_files(argd)) else 1
+        return 0 if print_files(config) else 1
+    return 0 if (print_files(config) and save_config(config)) else 1
 
 
 def filename_is_stdin(s):
@@ -284,10 +284,9 @@ def parse_printer_config(argd):
         'debug': config['debug'],
     }
     if DEBUG:
-        skip_names = ('formatfilename', 'printargs')
         print_debug(
             'Final printer config',
-            {k: v for k, v in config.items() if k not in skip_names})
+            {k: v for k, v in config.items() if k not in NON_JSON_KEYS})
     return config
 
 
@@ -399,7 +398,7 @@ def print_file(fileobject, formatter, **kwargs):
     return True
 
 
-def print_files(argd):
+def print_files(config):
     """ Print several files at once. Parses user string args into usable
         objects for `print_file` (Lexer(), Formatter()).
         Decides whether to disable all lexing (just piping input/output).
@@ -407,7 +406,6 @@ def print_files(argd):
         Arguments:
             argd  : A docopt arg dict from the command line.
     """
-    config = parse_printer_config(argd)
     if not config:
         # Any user arg errors have been printed, just return.
         return False
@@ -520,7 +518,23 @@ def print_styles():
 
 def save_config(config):
     """ Save the config object as json. """
+    if DEBUG:
+        debugconfig = {
+            k: v for k, v in config.items()
+            if k not in NON_JSON_KEYS
+        }
+        print_debug('Checking', value=debugconfig)
     config = {k: v for k, v in config.items() if v and (k in CONFIGOPTS)}
+    if DEBUG:
+        debugconfig = {
+            k: v for k, v in config.items()
+            if k not in NON_JSON_KEYS
+        }
+        print_debug('Valid config', value=debugconfig)
+    if not config:
+        print_debug('No config to save.')
+        return False
+    print_debug('Saving config', value=config)
     try:
         with open(CONFIG, 'w') as f:
             json.dump(config, f, indent=4, sort_keys=True)
@@ -585,7 +599,7 @@ def try_formatter(formattername, stylename, background=None, args=None):
     formattername = formattername or 'terminal'
     formattercls = FORMATTERS[formattername]['class']
 
-    print_debug('formatter args for {}'.format(formattername), formatterargs)
+    print_debug('Formatter args for {}'.format(formattername), formatterargs)
     try:
         formatter = formattercls(**formatterargs)
     except pygments.util.ClassNotFound:
