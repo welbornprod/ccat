@@ -8,13 +8,14 @@
 from __future__ import print_function
 import json
 import os
+import re
 import sys
 import docopt
 import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.4.0'
+VERSION = '0.4.1'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -25,12 +26,14 @@ Usage:
     {script} -h | -v
     {script} [FILE...] [-b style] [-f name] [-g | -l name] [-s name]
          [-c | -C] [-D] [-n | -N] [-p] [--nosave]
-    {script} -F | -L | -S
+    {script} (-F | -L | -S) [PATTERN]
 
 Options:
     FILE                         : One or many files to print.
                                    When - is given, or no FILEs are given,
                                    use stdin.
+    PATTERN                      : Only list items with this regex/text
+                                   pattern in the name or description.
     -b style,--background style  : Either 'light', or 'dark'.
                                    Changes the highlight style.
     -c,--colors                  : Force colors, even when piping output.
@@ -82,12 +85,13 @@ DEBUG = False
 
 def main(argd):
     """ Main entry point, expects doctopt arg dict as argd """
+    pat = try_repat(argd['PATTERN'], default=None)
     if argd['--lexers']:
-        return 0 if print_lexers() else 1
+        return print_lexers(pat=pat)
     elif argd['--styles']:
-        return 0 if print_styles() else 1
+        return print_styles(pat=pat)
     elif argd['--formatters']:
-        return 0 if print_formatters() else 1
+        return print_formatters(pat=pat)
     # Print files.
     config = parse_printer_config(argd)
     if argd['--nosave']:
@@ -310,7 +314,7 @@ def pipe_file_linenos(fileobject):
     try:
         lines = fileobject.readlines()
     except Exception as ex:
-        print_stderr('Unable to read the file: {}\n{}'.format(
+        print_err('Unable to read the file: {}\n{}'.format(
             fileobject.name,
             ex))
         return False
@@ -328,7 +332,7 @@ def pipe_file_simple(fileobject):
     try:
         sys.stdout.buffer.write(fileobject.buffer.read())
     except EnvironmentError as ex:
-        print_stderr('Unable to read the file: {}\n{}'.format(
+        print_err('Unable to read the file: {}\n{}'.format(
             fileobject.name,
             ex))
         return False
@@ -343,6 +347,13 @@ def print_debug(lbl, value=None):
             print_status('{}:'.format(lbl), value=value)
         else:
             print_status(str(lbl))
+
+
+def print_err(*args, **kwargs):
+    """ A print that uses sys.stderr instead of stdout. No formatting. """
+    if kwargs.get('file', None) is None:
+        kwargs['file'] = sys.stderr
+    print(*args, **kwargs)
 
 
 def print_file(fileobject, formatter, **kwargs):
@@ -427,30 +438,69 @@ def print_files(config):
     return all(results)
 
 
-def print_formatters():
+def print_formatters(pat=None):
     """ Print all known formatters. """
     # These are terminal-friendly formatters, there are many others.
-    print('\nAvailable formatters:')
-    print('    {}'.format('\n    '.join(FORMATTERS)))
-    return True
+    if pat is None:
+        fmters = FORMATTERS
+    else:
+        fmters = [
+            s for s in FORMATTERS
+            if pat.search(s) is not None
+        ]
+    if not fmters:
+        print_err('\nNo formatters matching: {!r}'.format(pat.pattern))
+        return 1
+    print('\nAvailable formatters{}:'.format(
+        '' if pat is None else ' matching {!r}'.format(pat.pattern)
+    ))
+    print('    {}'.format('\n    '.join(fmters)))
+    return 0
 
 
-def print_lexers():
+def print_lexers(pat=None):
     """ Print all known lexer names. """
-    print('\nLexer names:')
+
+    def patmatches(item):
+        if isinstance(item, str):
+            return pat.search(item) is not None
+        else:
+            # List of strings
+            return any(
+                (pat.search(s) is not None)
+                for s in item
+            )
 
     def fmtlabel(lbl, ns):
         """ Format a label/list-items pair. """
         return '    {}: {}'.format(lbl, ', '.join(sorted(ns)))
 
+    total = 0
     for lexerid in sorted(lexers.LEXERS, key=lambda k: lexers.LEXERS[k][1]):
         _, propername, names, types, __ = lexers.LEXERS[lexerid]
+        if pat is None:
+            matches = True
+        else:
+            matches = any(
+                patmatches(x)
+                for x in (propername, names, types)
+            )
+        if not matches:
+            continue
+        if total == 0:
+            print('\nLexer names{}:'.format(
+                '' if pat is None else ' matching {!r}'.format(pat.pattern)
+            ))
+        total += 1
         print('\n{}'.format(propername))
         print(fmtlabel('names', names))
         if types:
             print(fmtlabel('types', types))
 
-    return True
+    if not total:
+        print_err('\nNo lexers matching: {!r}'.format(pat.pattern))
+        return 1
+    return 0
 
 
 def print_status(msg, value=None, exc=None):
@@ -501,19 +551,25 @@ def print_status(msg, value=None, exc=None):
         print(msg, file=f)
 
 
-def print_stderr(*args, **kwargs):
-    """ A print that uses sys.stderr instead of stdout. No formatting. """
-    if kwargs.get('file', None) is None:
-        kwargs['file'] = sys.stderr
-    print(*args, **kwargs)
-
-
-def print_styles():
+def print_styles(pat=None):
     """ Prints all known pygments styles. """
-    print('\nStyle names:')
-    for stylename in sorted(styles.STYLE_MAP):
+    if pat is None:
+        sts = sorted(styles.STYLE_MAP)
+    else:
+        sts = sorted(
+            s
+            for s in styles.STYLE_MAP
+            if pat.search(s) is not None
+        )
+    if not sts:
+        print_err('\nNo styles matching: {!r}'.format(pat.pattern))
+        return 1
+    print('\nStyle names{}:'.format(
+        '' if pat is None else ' matching {!r}'.format(pat.pattern)
+    ))
+    for stylename in sts:
         print('    {}'.format(stylename))
-    return True
+    return 0
 
 
 def save_config(config):
@@ -539,7 +595,7 @@ def save_config(config):
         with open(CONFIG, 'w') as f:
             json.dump(config, f, indent=4, sort_keys=True)
     except TypeError as ex:
-        print_stderr('Error saving config to:', CONFIG, exc=ex)
+        print_err('Error saving config to:', CONFIG, exc=ex)
         return False
     return True
 
@@ -650,6 +706,21 @@ def try_lexer(name, filename=None):
         return lexer
     # Successful lexer by name.
     return lexer
+
+
+def try_repat(s, default=None):
+    """ Try parsing a string as a regex pattern.
+        Return a compiled regex pattern, or None on failure.
+        Invalid patterns (other than None) will raise InvalidArg.
+        Passing None will simply return None.
+    """
+    if not s:
+        return default
+    try:
+        p = re.compile(s, flags=re.IGNORECASE)
+    except re.error as ex:
+        raise InvalidArg('bad pattern: {}\n{}'.format(s, ex)) from ex
+    return p
 
 
 class ColorCodes(object):
@@ -883,11 +954,26 @@ def _docoptextras(help_, version, options, doc):
         print(color(version, 'blue'))
         sys.exit()
 
+class InvalidArg(ValueError):
+    """ Raised when the user has used an invalid argument. """
+    def __init__(self, msg=None):
+        self.msg = msg or ''
+
+    def __str__(self):
+        if self.msg:
+            return 'Invalid argument, {}'.format(self.msg)
+        return 'Invalid argument!'
+
 
 # Functions to override default docopt stuff
 docopt.DocoptExit = _ColorDocoptExit
 docopt.extras = _docoptextras
 
 if __name__ == '__main__':
-    mainret = main(docopt.docopt(USAGESTR, version=VERSIONSTR))
+    try:
+        mainret = main(docopt.docopt(USAGESTR, version=VERSIONSTR))
+    except InvalidArg as ex:
+        print_err(ex)
+        mainret = 1
+
     sys.exit(mainret)
