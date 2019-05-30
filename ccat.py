@@ -15,7 +15,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.4.1'
+VERSION = '0.4.3'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -61,6 +61,7 @@ CONFIG = os.path.join(SCRIPTDIR, 'ccat.json')
 CONFIGOPTS = (
     'background',
     'format',
+    'ext_lexers',
     'linenos',
     'style'
 )
@@ -188,19 +189,31 @@ def load_config(argd):
         with open(CONFIG, 'r') as f:
             config = json.load(f)
     except EnvironmentError as ex:
-        print_status('Error loading config from:', CONFIG, exc=ex)
-        return cmdline
+        raise InvalidConfig('Error loading config from', CONFIG, ex)
     except ValueError as exparse:
-        print_status('Error parsing config from:', CONFIG, exc=exparse)
-        return cmdline
+        raise InvalidConfig('Error parsing config from', CONFIG, exparse)
 
     # Merge the dicts.
-    merged = cmdline.copy()
+    merged = {k: v for k, v in cmdline.items()}
     for k, v in config.items():
         if k not in CONFIGOPTS:
             continue
-        if v and not merged[k]:
+        if v and not merged.get(k, None):
             merged[k] = v
+
+    # Ensure proper types for certain keys.
+    config.setdefault('ext_lexers', {})
+    if not isinstance(config['ext_lexers'], dict):
+        raise InvalidConfig(
+            'Invalid lexers config',
+            '({}) {!r}'.format(
+                type(config['lexers']).__name__,
+                config['lexers'],
+            ),
+            ValueError('Expecting a dict of {file_ext: lexer_name}'),
+        )
+        return cmdline
+
     # Signal that the config was loaded from file.
     if argd['--debug']:
         DEBUG = True
@@ -220,6 +233,8 @@ def parse_printer_config(argd):
                 'FILE'       : List of file names to print, where a None name
                                means to use stdin.
                 'format'     : Name of formatter.
+                'lexers'     : Dict of {file_ext: lexer_name} to force lexers
+                               for certain file extensions.
                 'nocolors'   : Whether to pipe output without pygments.
                 'stdin_tty'  : Whether stdin is a tty.
                 'stdout_tty' : Whether stdout is a tty.
@@ -574,19 +589,7 @@ def print_styles(pat=None):
 
 def save_config(config):
     """ Save the config object as json. """
-    if DEBUG:
-        debugconfig = {
-            k: v for k, v in config.items()
-            if k not in NON_JSON_KEYS
-        }
-        print_debug('Checking', value=debugconfig)
     config = {k: v for k, v in config.items() if v and (k in CONFIGOPTS)}
-    if DEBUG:
-        debugconfig = {
-            k: v for k, v in config.items()
-            if k not in NON_JSON_KEYS
-        }
-        print_debug('Valid config', value=debugconfig)
     if not config:
         print_debug('No config to save.')
         return False
@@ -624,8 +627,30 @@ def set_lexer(filename, config):
         print_status('Bad lexer name:', config['lexer'])
         print_status('Use \'ccat --lexers\' to list known lexer names.')
         return False
-    # No lexer name was given, guess it.
-    config['printargs']['lexer'] = None
+    # No lexer name was given, guess it or set known lexers by extension.
+    # Pygments doesn't always make the right guess, even with a known file ext.
+    # If it's not one of these extensions I'll force a guess later by setting
+    # it to `None`.
+    ext = os.path.splitext(filename)[-1].lower()
+    # Try the user's `lexers` config first.
+    lexername = config.get('ext_lexers', {}).get(ext, None)
+    if lexername is None:
+        # Default extension based lexers.
+        lexername = {
+            '.json': 'json',
+            '.vim': 'vim',
+        }.get(ext, None)
+        if lexername is not None:
+            print_debug(
+                'Set lexer name by default extension: {!r}'.format(ext),
+                value=lexername,
+            )
+    else:
+        print_debug(
+            'Set lexer name by user config extension: {!r}'.format(ext),
+            value=lexername,
+        )
+    config['printargs']['lexer'] = try_lexer(lexername, filename=filename)
     return True
 
 
@@ -954,15 +979,60 @@ def _docoptextras(help_, version, options, doc):
         print(color(version, 'blue'))
         sys.exit()
 
-class InvalidArg(ValueError):
-    """ Raised when the user has used an invalid argument. """
-    def __init__(self, msg=None):
-        self.msg = msg or ''
+
+class InvalidConfig(ValueError):
+    """ Raised when the config file is bad. """
+    default_str = 'Invalid config: {}'.format(CONFIG)
+    default_fmt = 'Invalid config, {}'
+
+    def __init__(self, msg=None, val=None, original_exc=None):
+        self.msg = str(msg or '')
+        self.val = str(val or '')
+        self.exc = original_exc
+
+    def __colr__(self):
+        if self.val:
+            s = ': '.join((
+                color(self.msg, 'red'),
+                color(self.val, 'blue'),
+            ))
+        elif self.msg:
+            s = color(self.default_fmt.format(self.msg), 'red')
+        else:
+            s = color(self.default_str, 'red')
+        if self.exc:
+            s = '\n'.join((
+                s,
+                '\n{}:'.format(color(type(self.exc).__name__, 'magenta')),
+                color(self.exc, 'red'),
+            ))
+        return s
 
     def __str__(self):
-        if self.msg:
-            return 'Invalid argument, {}'.format(self.msg)
-        return 'Invalid argument!'
+        if self.val:
+            s = ': '.join((self.msg, self.val))
+        elif self.msg:
+            s = self.default_fmt.format(self.msg)
+        else:
+            s = self.default_str
+        if self.exc:
+            s = '\n'.join((
+                s,
+                '\n{}:'.format(type(self.exc).__name__),
+                str(self.exc),
+            ))
+        return s
+
+    def as_color(self):
+        # Soon to be replaced with Colr's builtin support for __colr__,
+        # ..just preparing for the future.
+        return self.__colr__()
+
+
+class InvalidArg(InvalidConfig):
+    """ Raised when the user has used an invalid argument. """
+    default_str = 'Invalid argument!'
+    default_fmt = 'Invalid argument, {}'
 
 
 # Functions to override default docopt stuff
@@ -972,8 +1042,8 @@ docopt.extras = _docoptextras
 if __name__ == '__main__':
     try:
         mainret = main(docopt.docopt(USAGESTR, version=VERSIONSTR))
-    except InvalidArg as ex:
-        print_err(ex)
+    except InvalidConfig as ex:
+        print_err(ex.as_color())
         mainret = 1
 
     sys.exit(mainret)
