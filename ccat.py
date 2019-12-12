@@ -15,7 +15,7 @@ import pygments
 from pygments import formatters, lexers, styles
 
 NAME = 'ColorCat'
-VERSION = '0.4.3'
+VERSION = '0.4.4'
 VERSIONSTR = '{} v. {}'.format(NAME, VERSION)
 SCRIPT = os.path.split(os.path.abspath(sys.argv[0]))[1]
 SCRIPTDIR = os.path.abspath(sys.path[0])
@@ -631,6 +631,10 @@ def set_lexer(filename, config):
     # Pygments doesn't always make the right guess, even with a known file ext.
     # If it's not one of these extensions I'll force a guess later by setting
     # it to `None`.
+    if not filename:
+        # No file to check extension.
+        return True
+
     ext = os.path.splitext(filename)[-1].lower()
     # Try the user's `lexers` config first.
     lexername = config.get('ext_lexers', {}).get(ext, None)
